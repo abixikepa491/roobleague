@@ -11,9 +11,6 @@ workflows:
       ios_signing:
         distribution_type: app_store
         bundle_identifier: com.roobleague.app
-      groups:
-        - appstore_credentials
-        - firebase_config
       vars:
         XCODE_PROJECT: "RoobLeague.xcodeproj"
         XCODE_SCHEME: "RoobLeague"
@@ -21,91 +18,40 @@ workflows:
         APP_STORE_APPLE_ID: "6766211901"
       xcode: 26.2.x
 
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: main
+          include: true
+          source: true
+
     scripts:
-      - name: Provision Firebase config
-        script: |
-          FIREBASE_PLIST_PATH="$CM_BUILD_DIR/GoogleService-Info.plist"
-
-          if [ -n "$FIREBASE_CONFIG_BASE64" ]; then
-            echo "$FIREBASE_CONFIG_BASE64" | base64 --decode > "$FIREBASE_PLIST_PATH"
-          fi
-
-          if [ ! -f "$FIREBASE_PLIST_PATH" ]; then
-            echo "Missing GoogleService-Info.plist. Add FIREBASE_CONFIG_BASE64 to the firebase_config group."
-            exit 1
-          fi
-
-          CONFIG_BUNDLE_ID=$(/usr/libexec/PlistBuddy -c "Print :BUNDLE_ID" "$FIREBASE_PLIST_PATH")
-          if [ "$CONFIG_BUNDLE_ID" != "$BUNDLE_ID" ]; then
-            echo "Firebase bundle id mismatch: expected $BUNDLE_ID, got $CONFIG_BUNDLE_ID"
-            exit 1
-          fi
+      - name: Show Xcode version
+        script: xcodebuild -version
 
       - name: Resolve Swift packages
         script: |
-          xcodebuild -resolvePackageDependencies \
-            -project "$CM_BUILD_DIR/$XCODE_PROJECT"
+          xcodebuild -project "$CM_BUILD_DIR/$XCODE_PROJECT" \
+            -resolvePackageDependencies
 
-      - name: Apply Codemagic signing to Xcode project
+      - name: Set up code signing
         script: |
           xcode-project use-profiles \
             --project "$CM_BUILD_DIR/$XCODE_PROJECT"
 
-      - name: Validate provisioning profile
-        script: |
-          PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
-
-          if [ ! -d "$PROFILE_DIR" ]; then
-            echo "No provisioning profiles directory found at $PROFILE_DIR"
-            exit 1
-          fi
-
-          MATCHED_PROFILE=""
-          MATCHED_APS=""
-
-          for PROFILE_PATH in "$PROFILE_DIR"/*.mobileprovision; do
-            [ -e "$PROFILE_PATH" ] || continue
-
-            TMP_PLIST=$(mktemp /tmp/codemagic-profile-XXXXXX.plist)
-            security cms -D -i "$PROFILE_PATH" > "$TMP_PLIST"
-
-            PROFILE_APP_ID=$(/usr/libexec/PlistBuddy -c "Print :Entitlements:application-identifier" "$TMP_PLIST" 2>/dev/null || true)
-            PROFILE_APS=$(/usr/libexec/PlistBuddy -c "Print :Entitlements:aps-environment" "$TMP_PLIST" 2>/dev/null || true)
-            PROFILE_NAME=$(/usr/libexec/PlistBuddy -c "Print :Name" "$TMP_PLIST" 2>/dev/null || true)
-
-            echo "Found profile: ${PROFILE_NAME:-unknown} | ${PROFILE_APP_ID:-missing-app-id} | aps=${PROFILE_APS:-missing}"
-
-            case "$PROFILE_APP_ID" in
-              *".$BUNDLE_ID")
-                MATCHED_PROFILE="$PROFILE_PATH"
-                MATCHED_APS="$PROFILE_APS"
-                ;;
-            esac
-          done
-
-          if [ -z "$MATCHED_PROFILE" ]; then
-            echo "No provisioning profile matched bundle id $BUNDLE_ID."
-            echo "Make sure Codemagic generated an App Store profile for this exact bundle id."
-            exit 1
-          fi
-
-          echo "Matched provisioning profile: $MATCHED_PROFILE"
-
-          if [ -z "$MATCHED_APS" ]; then
-            echo "Matched provisioning profile is missing aps-environment."
-            echo "Enable Push Notifications for $BUNDLE_ID in Apple Developer and regenerate the profile in Codemagic."
-            exit 1
-          fi
-
-          echo "Matched profile aps-environment: $MATCHED_APS"
-
-      - name: Increment build number from App Store Connect
+      - name: Increment build number
         script: |
           cd "$CM_BUILD_DIR"
-          LATEST_BUILD_NUMBER=$(app-store-connect get-latest-app-store-build-number "$APP_STORE_APPLE_ID" || echo 0)
-          agvtool new-version -all $(($LATEST_BUILD_NUMBER + 1))
+          BUILD_NUMBER="$(date +%Y%m%d%H%M)"
+          if [ -n "$APP_STORE_APPLE_ID" ]; then
+            LATEST_BUILD_NUMBER=$(app-store-connect get-latest-app-store-build-number "$APP_STORE_APPLE_ID" || echo 0)
+            BUILD_NUMBER=$(("$LATEST_BUILD_NUMBER" + 1))
+          fi
+          echo "Using CFBundleVersion=$BUILD_NUMBER"
+          agvtool new-version -all "$BUILD_NUMBER"
 
-      - name: Build signed IPA
+      - name: Build IPA
         script: |
           xcode-project build-ipa \
             --project "$CM_BUILD_DIR/$XCODE_PROJECT" \
@@ -119,9 +65,6 @@ workflows:
 
     publishing:
       app_store_connect:
-        api_key: $APP_STORE_CONNECT_PRIVATE_KEY
-        key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
-        issuer_id: $APP_STORE_CONNECT_ISSUER_ID
+        auth: integration
         submit_to_testflight: true
-        expire_build_submitted_for_review: true
         submit_to_app_store: false
