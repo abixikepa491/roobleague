@@ -1,0 +1,76 @@
+workflows:
+  ios-release:
+    name: RoobLeague iOS Release
+    max_build_duration: 120
+    instance_type: mac_mini_m2
+
+    environment:
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.roobleague.app
+      groups:
+        - appstore_credentials
+        - firebase_config
+      vars:
+        XCODE_PROJECT: "RoobLeague.xcodeproj"
+        XCODE_SCHEME: "RoobLeague"
+        BUNDLE_ID: "com.roobleague.app"
+        APP_STORE_APPLE_ID: "REPLACE_WITH_APPLE_APP_ID"
+      xcode: 26.2.x
+
+    scripts:
+      - name: Provision Firebase config
+        script: |
+          FIREBASE_PLIST_PATH="$CM_BUILD_DIR/GoogleService-Info.plist"
+
+          if [ -n "$FIREBASE_CONFIG_BASE64" ]; then
+            echo "$FIREBASE_CONFIG_BASE64" | base64 --decode > "$FIREBASE_PLIST_PATH"
+          fi
+
+          if [ ! -f "$FIREBASE_PLIST_PATH" ]; then
+            echo "Missing GoogleService-Info.plist. Add FIREBASE_CONFIG_BASE64 to the firebase_config group."
+            exit 1
+          fi
+
+          CONFIG_BUNDLE_ID=$(/usr/libexec/PlistBuddy -c "Print :BUNDLE_ID" "$FIREBASE_PLIST_PATH")
+          if [ "$CONFIG_BUNDLE_ID" != "$BUNDLE_ID" ]; then
+            echo "Firebase bundle id mismatch: expected $BUNDLE_ID, got $CONFIG_BUNDLE_ID"
+            exit 1
+          fi
+
+      - name: Resolve Swift packages
+        script: |
+          xcodebuild -resolvePackageDependencies \
+            -project "$CM_BUILD_DIR/$XCODE_PROJECT"
+
+      - name: Apply Codemagic signing to Xcode project
+        script: |
+          xcode-project use-profiles \
+            --project "$CM_BUILD_DIR/$XCODE_PROJECT"
+
+      - name: Increment build number from App Store Connect
+        script: |
+          cd "$CM_BUILD_DIR"
+          LATEST_BUILD_NUMBER=$(app-store-connect get-latest-app-store-build-number "$APP_STORE_APPLE_ID" || echo 0)
+          agvtool new-version -all $(($LATEST_BUILD_NUMBER + 1))
+
+      - name: Build signed IPA
+        script: |
+          xcode-project build-ipa \
+            --project "$CM_BUILD_DIR/$XCODE_PROJECT" \
+            --scheme "$XCODE_SCHEME"
+
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+      - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.app
+      - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.dSYM
+
+    publishing:
+      app_store_connect:
+        api_key: $APP_STORE_CONNECT_PRIVATE_KEY
+        key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
+        issuer_id: $APP_STORE_CONNECT_ISSUER_ID
+        submit_to_testflight: true
+        expire_build_submitted_for_review: true
+        submit_to_app_store: false

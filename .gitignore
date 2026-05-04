@@ -1,0 +1,38 @@
+# macOS
+.DS_Store
+
+# Xcode user data
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+*.xcuserdatad/
+*.xcuserstate
+
+# SwiftPM / local builds
+.build/
+.swiftpm/
+Packages/**/.build/
+
+# Derived data and build output
+DerivedData/
+build/
+
+# Archives and export artifacts
+*.ipa
+*.dSYM
+*.dSYM.zip
+*.xcarchive
+
+# Fastlane / tooling logs
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/**/*.png
+fastlane/test_output/
+/tmp/xcodebuild_logs/
+
+# App secrets and local env files
+.env
+.env.*
+*.p8
+*.p12
+*.mobileprovision
+GoogleService-Info.plist
