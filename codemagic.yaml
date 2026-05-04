@@ -51,6 +51,16 @@ workflows:
           echo "Using CFBundleVersion=$BUILD_NUMBER"
           agvtool new-version -all "$BUILD_NUMBER"
 
+      - name: Diagnose signed archive
+        script: |
+          set -o pipefail
+          xcodebuild -project "$CM_BUILD_DIR/$XCODE_PROJECT" \
+            -scheme "$XCODE_SCHEME" \
+            -archivePath "$CM_BUILD_DIR/build/ios/xcarchive/${XCODE_SCHEME}_diagnostic.xcarchive" \
+            archive \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            | tee /tmp/xcodebuild_archive_diagnostic.log
+
       - name: Build IPA
         script: |
           xcode-project build-ipa \
